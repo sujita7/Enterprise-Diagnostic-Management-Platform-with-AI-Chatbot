@@ -1,0 +1,28 @@
+/* Content Protection */
+body {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Device Blocker Styles */
+#device-blocker {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: #071930;
+  z-index: 9999;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: white;
+  padding: 2rem;
+}
+
+/* @media (max-width: 1024px) {
+  #device-blocker {
+    display: flex;
+  }
+} */
