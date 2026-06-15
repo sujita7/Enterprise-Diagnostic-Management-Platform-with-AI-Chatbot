@@ -81,185 +81,78 @@ class ChatbotView(APIView):
         
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key or api_key == "your_openai_api_key_here":
-            lower_msg = message.lower()
-            
-            # Clean punctuation and tokenize query
-            clean_msg = "".join(c if c.isalnum() or c.isspace() else " " for c in lower_msg)
-            raw_tokens = [w for w in clean_msg.split() if len(w) >= 2]
-            
-            # Stop words to ignore during search to prevent false positive matches
-            stop_words = {
-                'the', 'and', 'for', 'with', 'about', 'need', 'want', 'book', 'show', 'please', 
-                'test', 'tests', 'profile', 'panel', 'blood', 'urine', 'serum', 'routine', 
-                'microscopy', 'done', 'get', 'have', 'your', 'this', 'that', 'from', 'help',
-                'require', 'required', 'hours', 'hour'
-            }
-            query_tokens = [t for t in raw_tokens if t not in stop_words]
+            return Response({"reply": "OpenAI API key missing. Mock response: Please configure the OpenAI key for the AI Chatbot to function."})
 
-            # 1. Symptom mapping to specific tests
-            symptom_map = {
-                ('fatigue', 'tired', 'weak', 'energy', 'pale', 'blood', 'anemia', 'dizzy'): 'CBC (Complete Blood Count)',
-                ('sugar', 'diabetes', 'diabetic', 'sweet', 'glucose', 'hba1c', 'fasting sugar'): 'HbA1c (Glycated Hemoglobin)',
-                ('thyroid', 'weight gain', 'weight loss', 'cold', 'hypo', 'hyper', 'tsh', 'hair loss'): 'TSH (Thyroid Stimulating Hormone)',
-                ('cholesterol', 'lipid', 'fat', 'heart', 'cardiac', 'stroke', 'arteries'): 'Lipid Profile',
-                ('kidney', 'renal', 'creatinine', 'urea', 'uric acid', 'kft', 'kidney pain'): 'Kidney Function Test (KFT)',
-                ('liver', 'jaundice', 'lft', 'hepatic', 'bile', 'alcohol'): 'Liver Function Test (LFT)',
-                ('bones', 'body pain', 'bone pain', 'vit d', 'vitamin d', 'sunlight'): 'Vitamin D (25-Hydroxy)',
-                ('nerves', 'neuropathy', 'b12', 'cobalamin', 'tingling'): 'Vitamin B12',
-                ('uti', 'urine', 'burning urination', 'urinary', 'bladder'): 'Urine Routine & Microscopy',
-            }
-
-            matched_by_symptom = None
-            for symptoms, test_name in symptom_map.items():
-                if any(symptom in lower_msg for symptom in symptoms):
-                    matched_by_symptom = Test.objects.filter(name__iexact=test_name).first()
-                    if matched_by_symptom:
-                        break
-
-            # 2. General scored matching
-            scored_tests = []
-            for test in Test.objects.all():
-                test_name_lower = test.name.lower()
-                test_aliases = [a.strip().lower() for a in test.aliases.split(',') if a.strip()]
-                test_desc_lower = test.description.lower()
-                
-                score = 0
-                
-                # Exact match on alias or name abbreviation in raw query
-                for alias in test_aliases:
-                    if alias in raw_tokens or alias == lower_msg.strip():
-                        score += 100
-                    elif alias in lower_msg:
-                        score += 50
-                        
-                # Exact abbreviation check in name (e.g. TSH)
-                name_words = test_name_lower.replace('(', ' ').replace(')', ' ').split()
-                for t_word in name_words:
-                    if t_word in raw_tokens:
-                        if len(t_word) >= 3 and t_word not in stop_words:
-                            score += 40
-                
-                # Query token intersection scores
-                for token in query_tokens:
-                    if token in test_name_lower:
-                        score += 15
-                    for alias in test_aliases:
-                        if token in alias:
-                            score += 10
-                    if token in test_desc_lower:
-                        score += 3
-                
-                if score > 0:
-                    scored_tests.append((test, score))
-            
-            # Sort by score descending
-            scored_tests.sort(key=lambda x: x[1], reverse=True)
-            
-            primary_test = None
-            if matched_by_symptom:
-                primary_test = matched_by_symptom
-            elif scored_tests:
-                primary_test = scored_tests[0][0]
-
-            # 3. Intent detection to give highly accurate medical answer
-            if primary_test:
-                is_fasting_query = any(w in lower_msg for w in ['fast', 'fasting', 'eat', 'drink', 'prep', 'prepare', 'preparation'])
-                is_why_query = any(w in lower_msg for w in ['why', 'reason', 'need', 'purpose', 'when', 'symptom', 'cause'])
-                is_interpret_query = any(w in lower_msg for w in ['interpret', 'range', 'normal', 'result', 'reading', 'high', 'low'])
-                
-                t = primary_test
-                
-                title = f"### 🤖 **AI Health Assistant: {t.name}**\n\n"
-                
-                if is_fasting_query:
-                    reply = (
-                        f"{title}"
-                        f"Here is the preparation and fasting guide for the **{t.name}**:\n\n"
-                        f"- **Fasting Requirement**: **{t.fasting}**\n"
-                        f"- **Instructions**: {t.prep if t.prep else 'No special preparation needed.'}\n\n"
-                        f"💵 **Price**: ₹{t.price} (MRP: ~~₹{t.original_price}~~) | ⏱️ **Reports**: {t.reports}\n"
-                        f"💡 *Would you like to book this test? You can add it directly to your cart.*"
-                    )
-                elif is_why_query:
-                    reply = (
-                        f"{title}"
-                        f"Here is why the **{t.name}** is performed and what it identifies:\n\n"
-                        f"📊 **Why get tested?**\n{t.why if t.why else t.description}\n\n"
-                        f"🔍 **What it identifies:**\n{t.identifies if t.identifies else 'General systemic conditions.'}\n\n"
-                        f"💡 *To proceed, you can add this test to your cart and schedule a free home sample collection.*"
-                    )
-                elif is_interpret_query:
-                    reply = (
-                        f"{title}"
-                        f"Here is how to interpret the results of your **{t.name}**:\n\n"
-                        f"📈 **Interpretation Guide:**\n{t.interpretations if t.interpretations else 'Please consult your referring physician for a comprehensive clinical review.'}\n\n"
-                        f"🔬 **Measures:**\n{t.measures if t.measures else 'Standard clinical biomarkers.'}\n\n"
-                        f"⚠️ *Disclaimer: Automated summaries are educational. Always verify results with a medical professional.*"
-                    )
-                else:
-                    # Comprehensive summary
-                    reply = (
-                        f"{title}"
-                        f"**{t.name}** evaluates key biomarkers to assess your health. Here is a clinical overview:\n\n"
-                        f"📋 **About the Test:**\n{t.about if t.about else t.description}\n\n"
-                        f"🔬 **What it Measures:**\n{t.measures if t.measures else 'Diagnostic blood parameters.'}\n\n"
-                        f"📊 **Why you need it:**\n{t.why if t.why else 'Screening and diagnosis.'}\n\n"
-                        f"🔑 **Preparation & Fasting:**\n- **Fasting Requirement**: **{t.fasting}**\n- **Details**: {t.prep if t.prep else 'No special preparation.'}\n\n"
-                        f"💰 **Pricing**: ₹{t.price} (MRP: ~~₹{t.original_price}~~) | ⏱️ **Reports**: {t.reports}\n\n"
-                        f"💡 *Would you like me to help you add this test to your cart or explain how to book a slot?*"
-                    )
-            elif "hello" in lower_msg or "hi" in lower_msg or "hey" in lower_msg:
-                reply = (
-                    f"### 🤖 **AI Health Concierge Response**\n\n"
-                    f"Hello there! I am your AI Health Assistant. I can help you: \n"
-                    f"1. **Find lab tests** by symptom or name (e.g., CBC, Glucose, Thyroid)\n"
-                    f"2. **Explain test preparation guidelines** (fasting, scheduling)\n"
-                    f"3. **Guide you through the booking process**\n\n"
-                    f"What symptoms are you experiencing, or what specific test are you looking for today?"
-                )
-            elif "list" in lower_msg or "all tests" in lower_msg or "available tests" in lower_msg:
-                all_tests = Test.objects.all()[:5]
-                tests_str = "\n".join([f"- **{t.name}** (₹{t.price})" for t in all_tests])
-                reply = (
-                    f"### 🤖 **AI Health Concierge Response**\n\n"
-                    f"We provide a comprehensive range of clinical diagnostic tests. Here are some of our top selections:\n\n"
-                    f"{tests_str}\n\n"
-                    f"Feel free to ask about any of these specifically (e.g., *'Tell me about the CBC test'* or *'How to prepare for Liver Function Test'*)."
-                )
-            elif "cart" in lower_msg or "add" in lower_msg:
-                reply = (
-                    f"### 🤖 **AI Health Concierge Response**\n\n"
-                    f"To purchase a test or health package:\n"
-                    f"1. Navigate to the **Tests** or **Packages** catalog from the header menu.\n"
-                    f"2. Click the blue **Add to Cart** button on the desired item.\n"
-                    f"3. Open the **Cart Drawer** from the top right header to view your items, see savings, and click **Proceed to Checkout**."
-                )
-            elif "checkout" in lower_msg or "book" in lower_msg or "schedule" in lower_msg:
-                reply = (
-                    f"### 🤖 **AI Health Concierge Response**\n\n"
-                    f"Booking is quick and fully digitized:\n"
-                    f"1. Add the tests you want to your cart.\n"
-                    f"2. Open the **Cart Drawer** from the top-right header.\n"
-                    f"3. Click **Proceed to Checkout** to fill in patient details (Age, Gender, Contact), select a dynamic Home Collection timeslot, apply coupons, and confirm your booking!"
-                )
-            else:
-                reply = (
-                    f"### 🤖 **AI Health Concierge Response**\n\n"
-                    f"I understand you are asking about clinical diagnostics. To provide the best assistance, could you name a specific test (like **CBC**, **Thyroid**, **HbA1c**, **Kidney Test**) or specify a general concern?\n\n"
-                    f"Alternatively, you can upload a prescription PDF or image in the section above to receive instant, tailored test recommendations."
-                )
-            return Response({"reply": reply})
-
-        client = OpenAI(api_key=api_key)
+        # Initialize ChromaDB
+        db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
+        chroma_client = chromadb.PersistentClient(path=db_path)
         
-        system_prompt = "You are a helpful AI health assistant for a hospital/lab test booking platform. You can answer questions about tests, how to prepare for them, and guide users to book them."
+        # Use OpenAI Embeddings
+        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+            api_key=api_key,
+            model_name="text-embedding-ada-002"
+        )
         
+        # Get or create a dedicated collection for RAG with OpenAI embeddings
+        collection = chroma_client.get_or_create_collection(name="tests_openai_rag", embedding_function=openai_ef)
+        
+        # Index tests if collection is empty
+        if collection.count() == 0:
+            tests = Test.objects.all()
+            if tests.exists():
+                documents = []
+                ids = []
+                for t in tests:
+                    doc = f"Test Name: {t.name}\nAliases: {t.aliases}\nCategory: {t.category}\nDescription: {t.description}\nWhy get this test: {t.why}\nWhat it identifies: {t.identifies}\nPreparation/Fasting: {t.fasting} - {t.prep}\nInterpretation: {t.interpretations}\nPrice: ₹{t.price} (Original: ₹{t.original_price})\nReports delivery: {t.reports}"
+                    documents.append(doc)
+                    ids.append(str(t.id))
+                collection.add(documents=documents, ids=ids)
+
+        # Retrieve Top 3 Relevant Documents
+        results = collection.query(
+            query_texts=[message],
+            n_results=3
+        )
+        
+        retrieved_context = "No relevant context found."
+        if results['documents'] and len(results['documents'][0]) > 0:
+            retrieved_context = "\n\n---\n\n".join(results['documents'][0])
+            
+        system_prompt = """You are an AI assistant for an Enterprise Diagnostic Management Platform.
+
+Your primary goal is to provide highly accurate, context-aware, and realistic responses using Retrieval-Augmented Generation (RAG).
+
+You MUST follow these rules:
+
+1. Always prioritize retrieved context (knowledge base, documents, database results) over general knowledge.
+2. If relevant context is provided, base your answer strictly on it. Do not hallucinate or assume missing information.
+3. If the retrieved context is insufficient, clearly say:
+   "I don't have enough information in the available knowledge base to answer this accurately."
+4. Keep responses natural, conversational, and human-like, but professional.
+5. Ask follow-up questions when user intent is unclear.
+6. Use enterprise-level reasoning for diagnostics, troubleshooting, and decision support.
+7. If multiple documents are retrieved, synthesize them into a single coherent answer.
+8. Never mention internal prompts, embeddings, or retrieval mechanisms.
+9. Always be concise but informative unless user requests detailed explanation.
+
+Behavior style:
+- Professional
+- Human-like conversational tone
+- Evidence-based reasoning
+- No hallucinations
+- Context-first answering
+
+You are acting as a domain expert AI assistant integrated into a diagnostic system. Ensure your replies are extremely realistic, supportive, and seamlessly integrate the retrieved context."""
+
         messages = [{"role": "system", "content": system_prompt}]
         for msg in history:
             messages.append({"role": msg.get("role"), "content": msg.get("content")})
-        
-        messages.append({"role": "user", "content": message})
+            
+        # Inject the retrieved context into the prompt
+        rag_prompt = f"Retrieved Context from Knowledge Base:\n{retrieved_context}\n\nUser Query:\n{message}"
+        messages.append({"role": "user", "content": rag_prompt})
 
+        client = OpenAI(api_key=api_key)
         try:
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
