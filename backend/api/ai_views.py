@@ -77,24 +77,26 @@ class ChatbotView(APIView):
 
     def post(self, request):
         message = request.data.get('message', '')
-        history = request.data.get('history', [])
         
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key or api_key == "your_openai_api_key_here":
-            return Response({"reply": "OpenAI API key missing. Mock response: Please configure the OpenAI key for the AI Chatbot to function."})
+        # Fetch the HuggingFace Token securely from environment variables
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            return Response({"error": "Hugging Face API token missing. Please configure HF_TOKEN in your .env file."}, status=500)
+        
+        try:
+            from huggingface_hub import InferenceClient
+        except ImportError:
+            return Response({"error": "huggingface_hub is not installed."}, status=500)
 
         # Initialize ChromaDB
         db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
         chroma_client = chromadb.PersistentClient(path=db_path)
         
-        # Use OpenAI Embeddings
-        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=api_key,
-            model_name="text-embedding-ada-002"
-        )
+        # Use Default Local Embeddings to bypass network DNS issues completely
+        hf_ef = embedding_functions.DefaultEmbeddingFunction()
         
-        # Get or create a dedicated collection for RAG with OpenAI embeddings
-        collection = chroma_client.get_or_create_collection(name="tests_openai_rag", embedding_function=openai_ef)
+        # Get or create collection for Hugging Face RAG
+        collection = chroma_client.get_or_create_collection(name="tests_hf_rag", embedding_function=hf_ef)
         
         # Index tests if collection is empty
         if collection.count() == 0:
@@ -118,50 +120,67 @@ class ChatbotView(APIView):
         if results['documents'] and len(results['documents'][0]) > 0:
             retrieved_context = "\n\n---\n\n".join(results['documents'][0])
             
-        system_prompt = """You are an AI assistant for an Enterprise Diagnostic Management Platform.
+        # Format the exact prompt structure provided by the user
+        prompt = f"""You are an intelligent AI assistant for an Enterprise Diagnostic Management Platform.
 
-Your primary goal is to provide highly accurate, context-aware, and realistic responses using Retrieval-Augmented Generation (RAG).
+Your job is to help users by answering questions related to:
+- system diagnostics
+- enterprise workflows
+- technical issues
+- database records (from retrieved context)
+- general troubleshooting
 
 You MUST follow these rules:
 
-1. Always prioritize retrieved context (knowledge base, documents, database results) over general knowledge.
-2. If relevant context is provided, base your answer strictly on it. Do not hallucinate or assume missing information.
-3. If the retrieved context is insufficient, clearly say:
-   "I don't have enough information in the available knowledge base to answer this accurately."
-4. Keep responses natural, conversational, and human-like, but professional.
-5. Ask follow-up questions when user intent is unclear.
-6. Use enterprise-level reasoning for diagnostics, troubleshooting, and decision support.
-7. If multiple documents are retrieved, synthesize them into a single coherent answer.
-8. Never mention internal prompts, embeddings, or retrieval mechanisms.
-9. Always be concise but informative unless user requests detailed explanation.
+1. Always use the provided CONTEXT first.
+   If context contains relevant information, prioritize it over general knowledge.
 
-Behavior style:
-- Professional
-- Human-like conversational tone
-- Evidence-based reasoning
-- No hallucinations
-- Context-first answering
+2. If context is not sufficient, clearly say:
+   "I don't have enough information in the provided system data to answer this accurately."
 
-You are acting as a domain expert AI assistant integrated into a diagnostic system. Ensure your replies are extremely realistic, supportive, and seamlessly integrate the retrieved context."""
+3. Do NOT hallucinate or assume missing information.
 
-        messages = [{"role": "system", "content": system_prompt}]
-        for msg in history:
-            messages.append({"role": msg.get("role"), "content": msg.get("content")})
-            
-        # Inject the retrieved context into the prompt
-        rag_prompt = f"Retrieved Context from Knowledge Base:\n{retrieved_context}\n\nUser Query:\n{message}"
-        messages.append({"role": "user", "content": rag_prompt})
+4. Keep answers:
+   - clear
+   - professional
+   - structured
+   - concise but complete
 
-        client = OpenAI(api_key=api_key)
+5. If the user asks for steps, always respond in numbered steps.
+
+6. If the user query is technical, include debugging guidance.
+
+7. If the user query is general, keep explanation simple and user-friendly.
+
+8. Always maintain enterprise-level tone (formal, helpful, precise).
+
+9. Never mention internal system design (RAG, embeddings, database, etc.).
+
+---
+
+CONTEXT:
+{retrieved_context}
+
+USER QUESTION:
+{message}
+
+FINAL ANSWER:
+"""
+
         try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages
+            # Use Qwen2.5-72B-Instruct via Hugging Face Inference API (Supported and Free)
+            client = InferenceClient("Qwen/Qwen2.5-72B-Instruct", token=hf_token)
+            
+            response = client.chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+                temperature=0.2
             )
+            
             reply = response.choices[0].message.content
-            return Response({"reply": reply})
+            return Response({"reply": reply.strip()})
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
+            return Response({"error": f"Hugging Face API Error: {str(e)}"}, status=500)
 
 class SmartSearchView(APIView):
     permission_classes = [permissions.AllowAny]
