@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const baseURL = 'http://127.0.0.1:8000/api/';
+const baseURL = import.meta.env.VITE_API_URL || 'https://enterprise-diagnostic-management.onrender.com/api/';
 
 const api = axios.create({
     baseURL,
