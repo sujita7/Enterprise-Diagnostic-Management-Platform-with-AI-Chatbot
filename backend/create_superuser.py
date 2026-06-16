@@ -16,4 +16,9 @@ if not User.objects.filter(username="admin").exists():
     )
     print("Superuser created")
 else:
-    print("Superuser already exists")
+    user = User.objects.get(username="admin")
+    user.set_password("admin12345")
+    user.is_staff = True
+    user.is_superuser = True
+    user.save()
+    print("Superuser already exists. Password reset to admin12345.")
