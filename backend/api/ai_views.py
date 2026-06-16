@@ -103,14 +103,22 @@ class ChatbotView(APIView):
         db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
         chroma_client = chromadb.PersistentClient(path=db_path)
         
-        # Use HuggingFace API for Embeddings to prevent OOM Kills on Render (512MB RAM)
-        hf_ef = embedding_functions.HuggingFaceEmbeddingFunction(
-            api_key=hf_token,
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key and api_key != "your_openai_api_key_here":
+            emb_fn = embedding_functions.OpenAIEmbeddingFunction(
+                api_key=api_key,
+                model_name="text-embedding-ada-002"
+            )
+            collection_name = "tests_openai_rag_v2"
+        else:
+            emb_fn = embedding_functions.HuggingFaceEmbeddingFunction(
+                api_key=hf_token,
+                model_name="sentence-transformers/all-MiniLM-L6-v2"
+            )
+            collection_name = "tests_hf_api_rag_v2"
         
-        # Get or create collection for Hugging Face RAG
-        collection = chroma_client.get_or_create_collection(name="tests_hf_api_rag", embedding_function=hf_ef)
+        # Get or create collection
+        collection = chroma_client.get_or_create_collection(name=collection_name, embedding_function=emb_fn)
         
         # Index tests if collection is empty
         if collection.count() == 0:
@@ -122,7 +130,16 @@ class ChatbotView(APIView):
                     doc = f"Test Name: {t.name}\nAliases: {t.aliases}\nCategory: {t.category}\nDescription: {t.description}\nWhy get this test: {t.why}\nWhat it identifies: {t.identifies}\nPreparation/Fasting: {t.fasting} - {t.prep}\nInterpretation: {t.interpretations}\nPrice: ₹{t.price} (Original: ₹{t.original_price})\nReports delivery: {t.reports}"
                     documents.append(doc)
                     ids.append(str(t.id))
-                collection.add(documents=documents, ids=ids)
+                
+                import time
+                for attempt in range(3):
+                    try:
+                        collection.add(documents=documents, ids=ids)
+                        break
+                    except Exception as e:
+                        if attempt == 2:
+                            return Response({"error": f"Failed to generate embeddings after 3 attempts. Hugging Face API might be unreachable from Render. Error: {str(e)}"}, status=500)
+                        time.sleep(2)
 
         # Retrieve Top 3 Relevant Documents
         results = collection.query(
