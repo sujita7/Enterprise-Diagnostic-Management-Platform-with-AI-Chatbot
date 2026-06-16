@@ -103,11 +103,14 @@ class ChatbotView(APIView):
         db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
         chroma_client = chromadb.PersistentClient(path=db_path)
         
-        # Use Default Local Embeddings to bypass network DNS issues completely
-        hf_ef = embedding_functions.DefaultEmbeddingFunction()
+        # Use HuggingFace API for Embeddings to prevent OOM Kills on Render (512MB RAM)
+        hf_ef = embedding_functions.HuggingFaceEmbeddingFunction(
+            api_key=hf_token,
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
         
         # Get or create collection for Hugging Face RAG
-        collection = chroma_client.get_or_create_collection(name="tests_hf_rag", embedding_function=hf_ef)
+        collection = chroma_client.get_or_create_collection(name="tests_hf_api_rag", embedding_function=hf_ef)
         
         # Index tests if collection is empty
         if collection.count() == 0:
@@ -207,9 +210,23 @@ class SmartSearchView(APIView):
         db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
         chroma_client = chromadb.PersistentClient(path=db_path)
         
-        emb_fn = embedding_functions.DefaultEmbeddingFunction()
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key and api_key != "your_openai_api_key_here":
+            emb_fn = embedding_functions.OpenAIEmbeddingFunction(
+                api_key=api_key,
+                model_name="text-embedding-ada-002"
+            )
+        else:
+            hf_token = os.environ.get("HF_TOKEN")
+            if hf_token:
+                emb_fn = embedding_functions.HuggingFaceEmbeddingFunction(
+                    api_key=hf_token,
+                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                )
+            else:
+                emb_fn = embedding_functions.DefaultEmbeddingFunction()
         
-        collection = chroma_client.get_or_create_collection(name="tests", embedding_function=emb_fn)
+        collection = chroma_client.get_or_create_collection(name="tests_api_search", embedding_function=emb_fn)
         
         if collection.count() == 0:
             tests = Test.objects.all()
