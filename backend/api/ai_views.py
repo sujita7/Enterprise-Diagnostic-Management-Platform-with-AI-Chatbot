@@ -10,9 +10,17 @@ from .serializers import TestSerializer
 from openai import OpenAI
 
 try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    pass
+
+try:
     import chromadb
     from chromadb.utils import embedding_functions
-except ImportError:
+except ImportError as e:
+    print(f"Failed to import chromadb: {e}")
     chromadb = None
 
 class SymptomCheckerView(APIView):
@@ -89,6 +97,9 @@ class ChatbotView(APIView):
             return Response({"error": "huggingface_hub is not installed."}, status=500)
 
         # Initialize ChromaDB
+        if chromadb is None:
+            return Response({"error": "ChromaDB is not available. Please check server logs for import errors."}, status=500)
+            
         db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
         chroma_client = chromadb.PersistentClient(path=db_path)
         
